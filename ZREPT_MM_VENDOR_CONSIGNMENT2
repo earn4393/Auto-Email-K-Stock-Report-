@@ -1,0 +1,2301 @@
+report zrept_mm_vendor_consignment message-id 38
+       no standard page heading line-size 100.
+*------------------------------------------------------------------
+* Copy from ZREPT_MM_MAT_DOC_LIST_MB51
+* Create Date : 09 Feb 2007
+* Create By   : Dechanit W.
+* Usage for movement type 411 , 412
+* 24.03.15 Add Amt currency & Change header
+* 20.05.15 Add Shipping Invoice & Billing Invoice & Info.Price (FIx)
+* 08.07.15 Add Std.Pack & Change Header
+* 22.07.15 Check Batch for search
+* 19.08.15 Add Field PO Date ,Unit Price,SPQ,MOQ
+* 24.08.15 Column Shipping Invoice clear content
+*          Column "Amt.Actual Currency" Change to "Amt calculate from info price"
+* 25.08.15 Add column Price date Cat.
+* 31.08.15 Get PO Curr.(WAERK)form EKKO
+* 09.09.15 Check Special Stock Indicator & Display PO ZSC Only
+* 18.09.15 Add Field & Change Header
+* 10.03.16 Change price from Fix Info. to price from Mat'Doc
+* 30.03.16 Add 5 digits Billing Amt
+
+*-------------------------------------------------------------------
+*       Tables declaration
+*-------------------------------------------------------------------
+tables: mkpf,
+        mseg,
+        bseg, bkpf,                                         "24.03.15
+        mara,  "General Material Data
+        t024,  "Purchasing Groups
+        a502,  "
+        lfa1,
+        eina,
+        eine,
+        ekko,
+        konp,  "Conditions (Item)
+        konv,  "Conditions (Transaction Data)
+        zpo_consign,                                        "19.08.15
+        dd07t,
+        ekbe,
+        bsis,
+        knmt,
+        tcurc. "Currency Codes
+type-pools: slis,   slist.
+
+*-------------------------------------
+*       Working Area Declaration
+*-------------------------------------
+data: begin of wa_tab occurs 100,       "Column in ALV
+        werks    like mseg-werks,       "Plant
+        matnr    like mseg-matnr,       "Material
+        budat    like mkpf-budat,       "Posting date
+        mblnr    like mseg-mblnr,       "Mat. Doc
+        zeile    like bsis-buzei,       "Mat doc Item
+        maktx    like makt-maktx,       "Mat desc.
+        matkl    like mara-matkl,       "Mat. Group
+        ebeln    like ekpo-ebeln,       "PO No.
+        ebelp    like ekpo-ebelp,       "PO Item
+        charg    like mseg-charg,       "Batch
+        lgort    like mseg-lgort,       "Str Loc.
+        bwart    like mseg-bwart,       "Movement type
+        mjahr    like mseg-mjahr,       "Fiscal Year
+        menge    like mseg-menge,       "Qty
+        meins    like mseg-meins,       "EA
+        dmbtr    like mseg-dmbtr,       "Amount in local Curr
+        waers    like mseg-waers,       "Currency
+        netpr    type p decimals 5,     "PO Price
+        waerk    like mseg-waers,       "PO Curr
+        lifnr    like mseg-lifnr,       "Vendor
+        name1    like lfa1-name1,       "Vendor Name1
+        land1    like lfa1-land1,       "Country
+        bktxt    like mkpf-bktxt,       "Document Header Text
+        shkzg    like mseg-shkzg,       "Debit/Credit Indicator
+*>>> Anan 13.10.2014
+        fmeins   like eina-meins,       "Info EA
+        fmenge   like mseg-menge,       "Info Qty
+        sjahr    like mseg-sjahr,
+        smbln    like mseg-smbln,
+        smblp    like mseg-smblp,
+        flag(1),
+*<<< Anan 13.10.2014
+* 24.03.15 Begin
+        wrbtr    type p decimals 5,     "Amount Currency
+        pswsl    like bseg-pswsl,       "Currency
+* 24.03.15 End
+        shipping(50),
+        billing(50),
+        fwaers like konp-konwa,
+        fbprme like konp-kmein,
+        finfo_price type p decimals 5,
+        std_pack like eine-minbm,
+* 19.08.15 Add
+        aedat like ekko-aedat,
+        moq   like eine-norbm,
+        magrv like mara-magrv,
+        type(20),
+* 19.08.15 End
+        meprf like eine-meprf,                              "27.08.15
+        meprf_desc like dd07t-ddtext,                       "27.08.15
+        bsart like ekko-bsart,                              "09.09.15
+        qty_split like  mseg-menge,
+        status(20),
+        doc_qty  like mseg-menge,                           "10.03.16
+        post_amt type p decimals 2,
+        bill_amt type p decimals 5,
+        contract like eord-ebeln,                           "11.07.16
+        text(70),                                           "11.07.16
+        rec_id(3),
+* Natnarin 07.10.2024 Add
+        cust3   type mseg-matnr,         "Customer 3 DIGI
+        kdmat   type knmt-kdmat,         "Customer Part
+        aging   type i,                  "Aging (day)
+        aging_x type char1,              "AGING (day) if >=356 days
+        status2(20),                     "Statas of material
+        slabs   type mkol-slabs,         "Beginning stock(Q'ty)
+        menge_q type mseg-menge,         "New GR (Q'ty)
+        endstk  type i,                  "Ending stock(Q'ty)
+* Structure for check Demand (Statas of material)
+        week_status type ztexcess_cube-week_status,  "Current / Previous Week
+        data_status type ztexcess_cube-data_status,  "SAP / ZTINVENTORY_CUBE
+        reqqty type ztexcess_cube-reqqty,            "Require Qty <= 0 (No damand)
+* Natnarin 07.10.2024 End
+
+      end of wa_tab.
+
+data: begin of i_ekbe occurs 0,
+         sort(30),
+         werks like ekbe-werks,
+         ebeln like ekbe-ebeln,
+         ebelp like ekbe-ebelp,
+         matnr like ekbe-matnr,
+         charg like ekbe-charg,
+         bamng like ekbe-bamng,
+         bwart like ekbe-bwart,
+         budat like ekbe-budat,
+
+      end of i_ekbe.
+
+data: begin of t_ekbe occurs 0,
+         werks like ekbe-werks,
+         ebeln like ekbe-ebeln,
+         ebelp like ekbe-ebelp,
+         matnr like ekbe-matnr,
+         charg like ekbe-charg,
+         bamng like ekbe-bamng,
+         budat like ekbe-budat,
+         qty_bal like mseg-menge,
+      end of t_ekbe.
+
+*-------------------------------------
+*       INTERNAL TABLES
+*-------------------------------------
+* DATA: I_TAB          LIKE STANDARD TABLE OF WA_TAB WITH HEADER LINE.
+data: i_tab    like wa_tab occurs 0 with header line.
+data: tmp_tab  like wa_tab occurs 0 with header line.
+data: tmp_tab2 like wa_tab occurs 0 with header line.
+data: ven_tab  like wa_tab occurs 0 with header line.
+data: gt_ztsvi_genc type table of ztsvi_genc with header line.
+data: gt_sum_qty like wa_tab occurs 0 with header line.
+data: gt_post_amt like wa_tab occurs 0 with header line.
+
+*Prepare Mail Object
+data:  lo_send_request type ref to cl_bcs value is initial.
+class cl_bcs definition load.
+data: lo_document type ref to cl_document_bcs value is initial. "document object
+data: i_text type bcsy_text. "Table for body
+data: w_text like line of i_text. "work area for message body
+data: lo_sender type ref to if_sender_bcs value is initial. "sender
+data: lo_recipient type ref to if_recipient_bcs value is initial. "recipient
+
+data: i_tab412 like standard table of wa_tab with header line.
+
+data: itab_fieldcat type slis_t_fieldcat_alv,
+      itab_layout type slis_layout_alv,
+      itab_sort   type slis_t_sortinfo_alv,
+      itab_event  type slis_t_event,
+      it_top_page type slis_t_listheader,
+      it_end_page type slis_t_listheader.
+
+***Attachment data
+data: lv_string type string,
+      lv_data_string type string,
+      lv_xstring type xstring.
+data: lit_binary_content type solix_tab,
+      l_attsubject type sood-objdes.
+
+data: l_text(1000) type c.
+data: begin of temp_ec occurs 0,    "store txt file from ECnet
+       desc(1000) type c,
+      end of temp_ec.
+data: begin of t_line occurs 0.
+        include structure tline.
+data: end of t_line.
+data: text(50).
+
+data: day(2),
+      month(2),
+      year(4),
+      tmp_date(10),
+      t_space(1).
+
+data: v_count type i.
+data: errflag(1).
+data: v_date type sy-datum.
+
+data: curr_week like scal-week,
+      last_week like scal-week.
+*-------------------------------------
+*       GLOBAL VARIABLES
+*-------------------------------------
+data: v_rate like tcurr-ukurs.
+
+ranges: r_bwtar for mbew-bwtar,
+        r_mtart for mara-mtart.
+
+data: iv_monthcount type  int4,
+      iv_date  type begda,
+      ev_date  type endda,
+      end_date type endda.
+
+data: day_of_week_num(1),
+      hold_day_of_week(3).
+*-------------------------------------
+*       CONSTANTS VARIABLES
+*-------------------------------------
+constants : c_repname(100) type c
+   value 'Material Document List (Mvt.411,412,911,912,122,123,201,202)'.
+*-------------------------------------
+*       FIELD-SYMBOL
+*-------------------------------------
+field-symbols: <fs> like wa_tab.
+*-------------------------------------
+*       SELECTION SCREEN
+*-------------------------------------
+selection-screen : begin of block main with frame title text-000.
+select-options: s_bukrs for bseg-bukrs default 'SVI' obligatory,
+                s_matnr for mseg-matnr obligatory,
+                s_werks for mseg-werks obligatory,
+                s_lgort for mseg-lgort,
+                s_charg for mseg-charg,
+                s_lifnr for mseg-lifnr,
+                s_budat for mkpf-budat,
+                s_xblnr for mkpf-xblnr.
+
+selection-screen : end of block main.
+
+selection-screen begin of block lastweek with frame title text-n01.
+parameters: p_lastwk as checkbox.
+selection-screen end of block lastweek.
+
+* choose format
+selection-screen begin of block format with frame title text-n02.
+parameters : p_prog radiobutton group form.
+parameters : p_cust radiobutton group form.
+selection-screen end of block format.
+
+* download
+selection-screen begin of block download with frame title text-n04.
+parameters: p_down as checkbox.
+
+* local
+selection-screen begin of line.
+parameters : r_file radiobutton group loc."  DEFAULT 'X'.
+selection-screen comment (20) text-d01 for field r_file.
+parameters : p_file like rlgrap-filename
+                         default 'C:\'.
+selection-screen end of line.
+SELECTION-SCREEN COMMENT /1(75) text-t01.
+
+* server
+selection-screen begin of line.
+parameters : r_file2 radiobutton group loc  default 'X'.
+selection-screen comment (20) text-d02 for field r_file2.
+parameters : p_file2 like rlgrap-filename
+                          default '/sapmnt/PRD/global/TXT/'.
+selection-screen end of line.
+selection-screen end of block download.
+
+* email
+SELECTION-SCREEN BEGIN OF BLOCK SENDMAIL WITH FRAME TITLE TEXT-N05.
+PARAMETERS: P_SEND AS CHECKBOX. "send immediately flag
+PARAMETERS: P_SUB TYPE CHAR50.  "email subject
+PARAMETERS: P_EMAIL1 TYPE ADR6-SMTP_ADDR. "Email input
+PARAMETERS: P_EMAIL2 TYPE ADR6-SMTP_ADDR. "Email input
+PARAMETERS: P_EMAIL3 TYPE ADR6-SMTP_ADDR. "Email input
+PARAMETERS: P_EMAIL4 TYPE ADR6-SMTP_ADDR. "Email input
+PARAMETERS: P_EMAIL5 TYPE ADR6-SMTP_ADDR. "Email input
+*PARAMETERS: P_PATH TYPE CHAR50. "filename path
+PARAMETERS: P_NAME TYPE CHAR50. "filename
+PARAMETERS: P_DATE TYPE CHAR50. "filename
+PARAMETERS: P_FORMAT TYPE CHAR50. "format file
+SELECTION-SCREEN END OF BLOCK SENDMAIL.
+
+*--------------------------------------------------------*
+* AT SELECTION-SCREEN
+*--------------------------------------------------------*
+at selection-screen on value-request for p_file.
+  perform pf_val_req_pfile changing p_file.
+
+*-------------------------------------
+*       TOP OF PAGE
+*-------------------------------------
+*-------------------------------------
+*       INITIALIZATION
+*-------------------------------------
+initialization.
+* email
+  P_NAME = 'K-Stock_'.
+  P_DATE = TMP_DATE.
+  P_FORMAT = 'xls'.
+  P_SUB = 'K-Stock report notify '.
+
+
+*-------------------------------------
+*       START-OF-SELECTION
+*-------------------------------------
+start-of-selection.
+
+  if p_prog = 'X'.
+    perform get_data_prog.
+  elseif p_cust = 'X'.
+    perform get_data_cust.
+  else.
+    perform get_data.
+  endif.
+
+* prepare data
+  if not tmp_tab[] is initial.
+    perform processing.
+  endif.
+
+*-------------------------------------
+*       END-OF-SELECTION
+*-------------------------------------
+end-of-selection.
+  if not i_tab[] is initial.
+    if p_down is initial.
+      perform display_alv.
+    else.
+      perform set_fieldcat changing itab_fieldcat.
+      perform download.
+    endif.
+  endif.
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_DATA
+*&---------------------------------------------------------------------*
+form get_data.
+
+  data: lv_rcpt  like ekbe-menge,
+        lv_ebeln like ekbe-ebeln,
+        lv_ebelp like ekbe-ebelp,
+        lv_charg like ekbe-charg,
+        lv_matnr like ekbe-matnr,
+        lv_werks like ekbe-werks,
+        lv_budat like ekbe-budat,
+        rcpt     like ekbe-menge,
+        cancel   like ekbe-menge.
+
+  select p~werks p~matnr
+         p~ebeln p~ebelp p~charg p~lgort p~bwart
+         k~mblnr k~mjahr p~zeile k~budat k~mjahr
+         p~menge p~meins p~dmbtr p~waers p~lifnr
+         k~bktxt p~shkzg
+    from mkpf as k inner join mseg as p
+      on k~mblnr = p~mblnr
+     and k~mjahr = p~mjahr
+    into corresponding fields of table tmp_tab
+   where p~bukrs in s_bukrs
+     and p~matnr in s_matnr
+     and p~werks in s_werks
+     and p~lgort in s_lgort
+     and ( p~bwart = '411' or p~bwart = '911'
+        or p~bwart = '555' or p~bwart = '121'
+        or p~bwart = '261' )
+     and p~sobkz = 'K'
+     and p~shkzg = 'H'
+     and p~lifnr in s_lifnr
+     and p~charg in s_charg
+*     AND ( K~BUDAT >= LV_LASTWEEKFR AND
+*           K~BUDAT <= LV_LASTWEEKTO )
+     and k~xblnr in s_xblnr.
+
+  sort tmp_tab by werks matnr charg.
+
+
+*select data for reversal movement type
+  select p~werks p~matnr
+         p~ebeln p~ebelp p~charg p~lgort p~bwart
+         k~mblnr k~mjahr p~zeile k~budat
+         p~menge p~meins p~dmbtr p~waers p~lifnr
+         k~bktxt p~shkzg p~sjahr p~smbln p~smblp
+    from mkpf as k inner join mseg as p
+      on k~mblnr = p~mblnr
+     and k~mjahr = p~mjahr
+    into corresponding fields of table i_tab412
+   where p~bukrs in s_bukrs
+     and p~matnr in s_matnr
+     and p~werks in s_werks
+     and p~lgort in s_lgort
+     and ( p~bwart = '412' or p~bwart = '912'
+        or p~bwart = '556' or p~bwart = '122'
+        or p~bwart = '262' )
+     and p~sobkz = 'K'
+     and p~lifnr in s_lifnr
+     and p~charg in s_charg
+*    AND ( K~BUDAT >= LV_LASTWEEKFR AND
+*          K~BUDAT <= LV_LASTWEEKTO )
+     and k~xblnr in s_xblnr.
+
+  sort i_tab412 by sjahr smbln smblp shkzg.
+
+  select * from ztsvi_genc into table gt_ztsvi_genc
+                                where zprogram = sy-repid.
+
+endform.                    " GET_DATA
+*&---------------------------------------------------------------------*
+*&      Form  PROCESSING
+*&---------------------------------------------------------------------*
+form processing.
+
+  data: lv_week        like scal-week,
+        lv_monday      like sy-datum,
+        lv_sunday      like sy-datum,
+        lv_lastweekfr  like sy-datum,
+        lv_index       like sy-index,
+        lv_lastweekto  like sy-datum,
+        t_knumh        like konp-knumh,
+        netpr          like konp-kbetr,
+        waers          like konp-konwa,
+        peinh          like konp-kpein,
+        bprme          like konp-kmein.
+
+  data: lv_peinh  type ekpo-peinh,
+        lv_meins like eina-meins,
+        lv_412   like mseg-menge,
+        lv_qty   like mseg-menge,
+        poln(20),
+        i(2),
+        lv_status(1),
+        lv_ebelp  like ekpo-ebelp,
+        lv_assign like bseg-zuonr,
+        lv_mast_menge  like mseg-menge,
+        lv_det_menge   like mseg-menge.
+
+  data: lv_cust3 type mseg-matnr,
+        lv_budat type mseg-mjahr.
+
+  data: lt_mkol type table of mkol,
+        lw_mkol type mkol.
+
+  sort tmp_tab by mblnr.
+
+  sort i_tab412 by mblnr.
+
+  loop at i_tab412.
+    read table tmp_tab with key matnr = i_tab412-matnr.
+    if sy-subrc = 0 and i_tab412-smbln is initial.
+      i_tab412-sjahr = tmp_tab-mjahr.
+      i_tab412-smbln = tmp_tab-mblnr.
+      i_tab412-smblp = tmp_tab-zeile.
+      modify i_tab412.
+    endif.
+  endloop.
+
+  if p_lastwk is not initial.
+    perform get_week using sy-datum changing curr_week.
+    last_week = curr_week - 1.
+  endif.
+
+  if sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  else.
+    call function 'LAST_WEEK'
+    exporting
+      current_week       = curr_week
+    importing
+*       LAST_WEEK          =
+      monday             = lv_monday
+      sunday             = lv_sunday.
+  endif.
+
+  lv_lastweekfr = lv_monday.
+  lv_lastweekto = lv_sunday.
+
+  sort tmp_tab by budat charg+2(8) matnr mblnr descending .
+  sort t_ekbe by  budat charg+2(8) matnr ebeln ebelp descending .
+
+  clear : lv_412, lv_assign, lv_qty,lv_status.
+  loop at tmp_tab.
+    move-corresponding tmp_tab to tmp_tab2.
+    tmp_tab2-cust3 = tmp_tab2-matnr+0(3) .                  "LV_CUST3.
+    append tmp_tab2.
+  endloop.
+
+  loop at i_tab412.
+    move-corresponding i_tab412 to tmp_tab2.
+    tmp_tab2-cust3 = tmp_tab2-matnr+0(3) .                  "LV_CUST3.
+    append tmp_tab2.
+  endloop.
+
+  loop at tmp_tab2 where flag = ''
+                    and menge > 0.
+    i_tab-ebeln   = 'No PO'.
+    i_tab-ebelp   = ''.
+    i_tab-menge   = tmp_tab2-menge.
+    i_tab-charg   = tmp_tab2-charg.
+    i_tab-matnr   = tmp_tab2-matnr.
+    i_tab-lifnr   = tmp_tab2-lifnr.
+    i_tab-budat   = tmp_tab2-budat.
+    i_tab-werks   = tmp_tab2-werks.
+    i_tab-meins   = tmp_tab2-meins.
+    i_tab-mblnr   = tmp_tab2-mblnr.
+    i_tab-mjahr   = tmp_tab2-mjahr.
+    i_tab-zeile   = tmp_tab2-zeile.
+    i_tab-bwart   = tmp_tab2-bwart.
+    i_tab-lgort   = tmp_tab2-lgort.
+    i_tab-doc_qty = tmp_tab2-menge.
+    i_tab-status  = 'No Purchase Order'.
+    i_tab-cust3   = tmp_tab2-cust3.
+    append i_tab.
+  endloop.
+
+  sort i_tab by mjahr mblnr zeile.
+
+  loop at i_tab assigning <fs>.
+    clear lv_assign.
+    concatenate <fs>-mblnr <fs>-mjahr into lv_assign.
+
+* >> Natnarin 08.10.2024
+* >> Get Customer part
+    select single kdmat
+      from knmt
+      into <fs>-kdmat
+      where matnr = <fs>-matnr.
+
+* >> Get Aging (day)
+    "Posting date - Today
+    <fs>-aging = sy-datum - <fs>-budat.
+
+    if <fs>-aging >= 365.
+      <fs>-aging_x = 'X'.
+    endif.
+
+* >> Get Statas of material
+*    SELECT SINGLE WEEK_STATUS
+*                  DATA_STATUS
+*                  REQQTY
+*    FROM ZTEXCESS_CUBE
+*    INTO (<FS>-WEEK_STATUS, <FS>-DATA_STATUS, <FS>-REQQTY)
+*      WHERE
+
+* >> Get Beginning stock(Q'ty)
+    select *
+    from mkol
+    into corresponding fields of table lt_mkol
+    where matnr = <fs>-matnr
+    and   werks = <fs>-werks
+    and   charg = <fs>-charg.
+
+    if sy-subrc = 0.
+      sort lt_mkol by lfmon descending.
+      read table lt_mkol index 1 into lw_mkol.
+      if sy-subrc = 0.
+        <fs>-slabs = lw_mkol-slabs.
+      endif.
+    endif.
+
+* >> Get New GR (Q'ty)
+    lv_budat = s_budat+0(7).
+    select single menge
+    from mseg
+    into <fs>-menge_q
+    where mjahr = lv_budat
+    and   bwart = '101'
+    and   matnr = <fs>-matnr
+    and   werks = <fs>-werks
+    and   charg = <fs>-charg
+    and   sobkz = 'K'.
+
+* >> Get Ending stock(Q'ty)
+    <fs>-endstk = ( <fs>-slabs + <fs>-menge_q ) - <fs>-menge.
+
+* << Natnarin 08.10.2024
+
+    select single maktx
+      from makt
+      into <fs>-maktx
+      where matnr = <fs>-matnr
+        and spras = 'E'.
+
+    select single matkl magrv
+      from mara
+      into (<fs>-matkl, <fs>-magrv )
+      where matnr = <fs>-matnr.
+
+    select single bezei
+      from tvegrt
+      into <fs>-type
+      where magrv = <fs>-magrv.
+
+    select single name1 land1
+      from lfa1
+      into (<fs>-name1, <fs>-land1)
+      where lifnr = <fs>-lifnr.
+
+    perform get_fix_vendor using <fs>-werks
+                                 <fs>-matnr
+                                 <fs>-menge
+                                 <fs>-matkl
+                        changing <fs>-fmeins
+                                 <fs>-fmenge
+                                 <fs>-finfo_price
+                                 <fs>-fwaers
+                                 <fs>-fbprme
+                                 <fs>-std_pack
+                                 <fs>-moq
+                                 <fs>-meprf_desc
+                                 <fs>-contract.
+
+    perform read_text using <fs>-contract.
+
+    select single aedat waers bsart
+      from ekko into (<fs>-aedat, <fs>-waerk, <fs>-bsart )
+      where ebeln = <fs>-ebeln.
+
+    select single netpr peinh
+      from zpo_consign
+      into (<fs>-netpr, lv_peinh )
+      where ebeln = <fs>-ebeln
+        and ebelp = <fs>-ebelp.
+
+    if sy-subrc = 0.
+      if lv_peinh <> 0.
+        <fs>-netpr = <fs>-netpr / lv_peinh.
+      else.
+        <fs>-netpr = 0.
+      endif.
+    endif.
+
+    perform read_text_billing using  poln .
+    if text is initial.
+      <fs>-billing = '' .
+    else.
+      move text to <fs>-billing.
+    endif.
+
+    select single *
+       from bkpf
+      where bukrs in s_bukrs
+        and awkey = lv_assign
+        and gjahr = <fs>-mjahr.
+
+    if sy-subrc = 0.
+      select single * from bseg
+               where belnr = bkpf-belnr
+*               AND ZUONR = LV_ASSIGN
+               and gjahr = <fs>-mjahr
+               and buzei = <fs>-zeile
+               and matnr = <fs>-matnr
+*               AND BSCHL = '91'
+*               AND KTOSL = 'KON'
+               and bukrs in s_bukrs.
+      <fs>-wrbtr   = bseg-wrbtr.
+      <fs>-doc_qty = bseg-menge.
+      if <fs>-doc_qty > 0.
+        <fs>-wrbtr = ( <fs>-wrbtr / <fs>-doc_qty ) .
+      endif.
+    endif.
+
+*find unit price in info record for consignment
+
+    select single * from eina
+         where matnr = <fs>-matnr
+           and lifnr = <fs>-lifnr.
+    if sy-subrc = 0.
+      select single * from eine where infnr = eina-infnr
+*                  AND EKORG = EORD-EKORG
+             and loekz = ''
+             and esokz = '2'
+             and werks = <fs>-werks.
+      if sy-subrc = 0.
+        select single knumh into t_knumh from a017
+             where kappl = 'M'
+               and kschl = 'PB00'
+               and lifnr = <fs>-lifnr
+               and matnr = <fs>-matnr
+*               AND EKORG = EKORG
+               and werks = <fs>-werks
+               and esokz = eine-esokz
+               and datbi >= <fs>-budat
+               and datab <= <fs>-budat.
+        if sy-subrc = 0.
+          perform get_konp using t_knumh changing netpr waers peinh bprme.
+        endif.
+      endif.
+
+      <fs>-wrbtr = netpr / peinh.
+
+    endif.
+
+    <fs>-bill_amt = <fs>-menge * <fs>-netpr.
+    <fs>-post_amt = <fs>-menge * <fs>-wrbtr.
+
+  endloop.
+
+  loop at i_tab.
+    if i_tab-bwart = '411' or i_tab-bwart = '911'.
+      i_tab-menge  =   i_tab-menge * -1.
+      i_tab-post_amt = i_tab-post_amt * -1.
+      modify i_tab.
+    endif.
+  endloop.
+
+  sort i_tab by budat.
+  delete i_tab where flag = 'X'.
+
+  if p_lastwk is not initial.
+    delete i_tab where budat lt lv_lastweekfr .
+    delete i_tab where budat gt lv_lastweekto .
+  else.
+    if s_budat is not initial.
+      delete i_tab where budat lt s_budat-low .
+      delete i_tab where budat gt s_budat-high.
+    endif.
+  endif.
+
+endform.                    " PROCESSING
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_ALV
+*&---------------------------------------------------------------------*
+form display_alv.
+  data : lv_repid like sy-repid.
+
+  perform append_header using it_top_page[].
+  perform set_layout   changing itab_layout.
+  perform set_fieldcat changing itab_fieldcat.
+  perform set_event    changing itab_event.
+*  PERFORM SET_SORTING  CHANGING ITAB_SORT.
+
+  lv_repid = sy-repid.
+*  V_PAGNO = sy-pagno.
+
+  call function 'REUSE_ALV_GRID_DISPLAY'
+    exporting
+      i_callback_program = lv_repid
+      is_layout          = itab_layout
+      it_fieldcat        = itab_fieldcat[]
+      it_events          = itab_event[]
+      it_sort            = itab_sort
+      i_save             = 'A'  " all
+    tables
+      t_outtab           = i_tab.
+*       EXCEPTIONS
+*            program_error      = 1
+*            OTHERS             = 2.
+  if sy-subrc <> 0.
+*    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+*            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  endif.
+endform.                    " display_ALV
+*----------------------------------------------------------------------*
+form set_layout changing p_st_layout type slis_layout_alv.
+*----------------------------------------------------------------------*
+  p_st_layout-colwidth_optimize = 'X'.
+  p_st_layout-zebra = 'X'.
+  p_st_layout-detail_popup = 'X'.
+*  p_st_layout-detail_initial_lines = 'X'.
+  p_st_layout-expand_all = 'X'.
+*  p_st_layout-group_change_edit = 'X'.
+  p_st_layout-info_fieldname    = 'COLOR'.
+  p_st_layout-box_tabname = 'ITAB'.
+*  p_st_layout-box_fieldname    = 'SELECT'.
+  p_st_layout-get_selinfos         = 'X'.
+endform.                    " set_layout
+
+*----------------------------------------------------------------------*
+form set_fieldcat changing  p_it_fieldcat type slis_t_fieldcat_alv.
+*----------------------------------------------------------------------*
+  data : wa_fieldcat type slis_fieldcat_alv,
+         v_counter(3) type n,
+         v_rowpos(3) type n.
+
+  refresh p_it_fieldcat.
+  v_counter = 0.
+
+  add 1 to v_counter.
+  perform append_fieldcat using 'WERKS' 'I_TAB'
+                                'C'
+                                'Plant' v_counter
+                                'F' space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'MATNR' 'I_TAB'
+                                'C'
+                                'Material' v_counter
+                                'F' space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'MAKTX' 'I_TAB'
+                                'C'
+                                'Description' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'MATKL' 'I_TAB'
+                                'C'
+                                'Mat Group' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'EBELN' 'I_TAB'
+                                'C'
+                                'PO Number' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'EBELP' 'I_TAB'
+                                'N'
+                                'PO Item' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'AEDAT' 'I_TAB'
+                                'D'
+                                'Order Date' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'CHARG' 'I_TAB'
+                                'C'
+                                'Batch' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'LGORT' 'I_TAB'
+                                'C'
+                                'Location' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'BWART' 'I_TAB'
+                                'C'
+                                'MVT' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'MBLNR' 'I_TAB'
+                                'C'
+                                'Document' v_counter
+                                space space p_it_fieldcat[].
+
+  add 1 to v_counter.
+  perform append_fieldcat using 'BUDAT' 'I_TAB'
+                                'D'
+                                'Posting Date' v_counter
+                                space space p_it_fieldcat[].
+
+  add 1 to v_counter.
+  perform append_fieldcat using 'MENGE' 'I_TAB'
+                                'P'
+                                'Qty' v_counter
+                                space space p_it_fieldcat[].
+
+  add 1 to v_counter.
+  perform append_fieldcat using 'MEINS' 'I_TAB'
+                                'C'
+                                'Unit' v_counter
+                                space space p_it_fieldcat[].
+
+  add 1 to v_counter.
+  perform append_fieldcat using 'NETPR' 'I_TAB'
+                                'P'
+                                'Latest PO Price' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'WAERK' 'I_TAB'
+                                'C'
+                                'PO Currency' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'LIFNR' 'I_TAB'
+                                'C'
+                                'Vendor Code' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'NAME1' 'I_TAB'
+                                'C'
+                                'Vendor Name' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'LAND1' 'I_TAB'
+                                'C'
+                                'Country' v_counter
+                                space space p_it_fieldcat[].
+
+  add 1 to v_counter.
+  perform append_fieldcat using 'WRBTR' 'I_TAB'
+                                'P'
+                                'Posting Unit Price' v_counter
+                                space space p_it_fieldcat[].
+* Add 10.03.16
+  add 1 to v_counter.
+  perform append_fieldcat using 'FWAERS' 'I_TAB'
+                                'C'
+                                'Info.Curr' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'FBPRME' 'I_TAB'
+                                'C'
+                                'Info.UM' v_counter
+                                space space p_it_fieldcat[].
+
+  add 1 to v_counter.
+  perform append_fieldcat using 'POST_AMT' 'I_TAB'
+                                'P'
+                                'Posting AMT' v_counter
+                                space space p_it_fieldcat[].
+
+  add 1 to v_counter.
+  perform append_fieldcat using 'BILL_AMT' 'I_TAB'
+                                'P'
+                                'Billing AMT' v_counter
+                                space space p_it_fieldcat[].
+* 08.07.15 Begin
+  add 1 to v_counter.
+  perform append_fieldcat using 'STD_PACK' 'I_TAB'
+                                'P'
+                                'SPQ' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'MOQ' 'I_TAB'
+                                'P'
+                                'MOQ' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'TYPE' 'I_TAB'
+                                'C'
+                                'Type of Part' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'MEPRF_DESC' 'I_TAB'
+                                'C'
+                                'Pr.Date Cat' v_counter
+                                space space p_it_fieldcat[].
+*11.07.16
+  add 1 to v_counter.
+  perform append_fieldcat using 'TEXT' 'I_TAB'
+                                'C'
+                                'Liability Freshness' v_counter
+                                space space p_it_fieldcat[].
+*11.07.16
+  add 1 to v_counter.
+  perform append_fieldcat using 'CUST3' 'I_TAB'
+                                'C'
+                                'Customer' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'KDMAT' 'I_TAB'
+                                'C'
+                                'Customer Part' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'AGING' 'I_TAB'
+                                'I'
+                                'Aging (day)' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'AGING_X' 'I_TAB'
+                                'C'
+                                '>=365 days' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'STATUS2' 'I_TAB'
+                                'C'
+                                'Statas of material' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'SLABS' 'I_TAB'
+                                'P'
+                                'Beginning stock(QTY)' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'MENGE_Q' 'I_TAB'
+                                'P'
+                                'New GR (QTY)' v_counter
+                                space space p_it_fieldcat[].
+  add 1 to v_counter.
+  perform append_fieldcat using 'ENDSTK' 'I_TAB'
+                                'I'
+                                'Ending stock(QTY)' v_counter
+                                space space p_it_fieldcat[].
+
+endform.                    " set_fieldcat
+
+*----------------------------------------------------------------------*
+form append_fieldcat using   p_i_field    p_i_table    p_i_inttype
+                             p_i_coltxt   p_i_colpos   p_i_cqflg
+                             p_i_dosum
+                             p_it_fieldcat type slis_t_fieldcat_alv.
+*----------------------------------------------------------------------*
+  data : wa_fieldcat type slis_fieldcat_alv,
+         v_coltxt_length type i.
+
+  wa_fieldcat-fieldname     = p_i_field.
+  wa_fieldcat-tabname       = p_i_table.
+*  WA_FIELDCAT-REF_TABNAME   = P_I_REFTABLE.
+*  WA_FIELDCAT-REF_FIELDNAME = P_I_REFFIELD.
+  wa_fieldcat-col_pos       = p_i_colpos.
+*  WA_FIELDCAT-ROW_POS       = P_I_ROWPOS.
+  wa_fieldcat-do_sum        = p_i_dosum.
+  wa_fieldcat-inttype      = p_i_inttype.
+
+  if not p_i_coltxt is initial.
+    v_coltxt_length = strlen( p_i_coltxt ).
+
+    if v_coltxt_length > 20.
+      wa_fieldcat-ddictxt = 'L'.
+      wa_fieldcat-seltext_l = p_i_coltxt.
+    elseif v_coltxt_length > 10.
+      wa_fieldcat-ddictxt = 'M'.
+      wa_fieldcat-seltext_m = p_i_coltxt.
+    else.
+      wa_fieldcat-ddictxt = 'S'.
+      wa_fieldcat-seltext_s = p_i_coltxt.
+    endif.
+  endif.
+
+  if p_i_cqflg = 'I'.           " Input
+    wa_fieldcat-input = 'X'.
+  endif.
+  if p_i_cqflg = 'F'.
+    wa_fieldcat-fix_column = 'X'.
+  endif.
+  append wa_fieldcat to p_it_fieldcat.
+endform.                    " append_fieldcat
+*&---------------------------------------------------------------------*
+*&      Form  set_event
+*&---------------------------------------------------------------------*
+form set_event changing p_it_event type slis_t_event.
+  field-symbols: <fs> type line of slis_t_event.
+
+  call function 'REUSE_ALV_EVENTS_GET'
+    exporting
+      i_list_type     = 0
+    importing
+      et_events       = p_it_event
+    exceptions
+      list_type_wrong = 1
+      others          = 2.
+  if sy-subrc <> 0.
+    message id sy-msgid type sy-msgty number sy-msgno
+            with sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  endif.
+
+  read table p_it_event with key name = slis_ev_top_of_page
+       assigning <fs>.
+  if sy-subrc = 0.
+*    IF P_GRID = SPACE.
+*      <fs>-NAME = 'TOP_OF_PAGE'.
+*      <fs>-FORM = 'HEADER_ALV'.
+*    ELSE.
+    <fs>-form = 'TOP_OF_PAGE'.
+*    ENDIF.
+    append <fs> to p_it_event.
+  endif.
+
+endform.                    " set_event
+*----------------------------------------------------------------------*
+form set_sorting changing p_itab_sort type slis_t_sortinfo_alv.
+*----------------------------------------------------------------------*
+  data : wa_sort type line of slis_t_sortinfo_alv.
+
+  refresh p_itab_sort.
+
+  move : '1'      to wa_sort-spos,
+         'WERKS'  to wa_sort-fieldname,
+         'X'      to wa_sort-up.
+  append wa_sort to p_itab_sort.
+  clear : wa_sort.
+
+  move : '2'      to wa_sort-spos,
+         'MATNR'  to wa_sort-fieldname,
+         'X'      to wa_sort-up.
+  append wa_sort to p_itab_sort.
+  clear : wa_sort.
+
+  move : '3'      to wa_sort-spos,
+         'BUDAT'  to wa_sort-fieldname,
+         'X'      to wa_sort-down.
+  append wa_sort to p_itab_sort.
+  clear : wa_sort.
+
+  move : '4'      to wa_sort-spos,
+         'MBLNR'  to wa_sort-fieldname,
+         'X'      to wa_sort-down.
+  append wa_sort to p_itab_sort.
+  clear : wa_sort.
+
+  move : '5'      to wa_sort-spos,
+         'ZEILE'  to wa_sort-fieldname,
+         'X'      to wa_sort-down.
+  append wa_sort to p_itab_sort.
+  clear : wa_sort.
+endform.                    " set_sorting
+*&---------------------------------------------------------------------*
+*&      Form  TOP_OF_PAGE
+*&---------------------------------------------------------------------*
+form top_of_page.
+
+  call function 'REUSE_ALV_COMMENTARY_WRITE'
+    exporting
+      it_list_commentary = it_top_page.
+
+endform.                    "TOP_OF_PAGE
+*&---------------------------------------------------------------------*
+*&      Form  append_header
+*&---------------------------------------------------------------------*
+form append_header using  p_it_top_page type slis_t_listheader.
+  data: wa_line type slis_listheader.
+  data: lv_space(10)    type c.
+  data: lv_repname(100) type c.                             "(200).
+  data: lv_low(10).
+  data: lv_high(10).
+
+  clear wa_line.
+  wa_line-typ  = 'H'.
+  lv_repname = c_repname.
+  shift lv_repname right by 10 places.
+  wa_line-info = lv_repname.
+  append wa_line to p_it_top_page.
+
+endform.                    " append_header
+*&---------------------------------------------------------------------*
+*&      Form  GET_TODAY_RATE
+*&---------------------------------------------------------------------*
+form get_rate using    p_date
+                       p_waers
+              changing p_rate.
+  data: lv_today(8) type n,
+        lv_gdatu  type tcurr-gdatu.
+
+*  CONCATENATE sy-datum+6(2) sy-datum+4(2) sy-datum(4) INTO lv_today.
+  concatenate p_date+6(2) p_date+4(2) p_date(4) into lv_today.
+  call function 'CONVERSION_EXIT_INVDT_INPUT'
+    exporting
+      input  = lv_today
+    importing
+      output = lv_gdatu.
+
+  select single ukurs
+    into p_rate
+    from tcurr
+    where kurst = 'M'
+      and fcurr = p_waers
+      and tcurr = 'THB'
+      and gdatu = lv_gdatu.
+endform.                    " GET_TODAY_RATE
+
+*&---------------------------------------------------------------------*
+*&      Form  ADD_MONTH_TO_DATE
+*&---------------------------------------------------------------------*
+form minus_month_to_date using  iv_monthcount
+                                iv_date
+                    changing    ev_date
+                                end_date.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(IV_MONTHCOUNT) TYPE  INT4
+*"     VALUE(IV_DATE) TYPE  BEGDA
+*"  EXPORTING
+*"     REFERENCE(EV_DATE) TYPE  ENDDA
+*"----------------------------------------------------------------------
+
+  data:
+    lv_date_after_n_month        type d,
+    lv_end_date_after_n_month    type d,
+    lv_number_of_year            type i.
+
+* calculate the date after n month
+  move iv_date  to  lv_date_after_n_month.
+
+  lv_number_of_year
+    =  ( lv_date_after_n_month+4(2) + iv_monthcount - 1 )  div 12.
+  lv_date_after_n_month(4)
+    =  lv_date_after_n_month(4) + lv_number_of_year.
+  lv_date_after_n_month+4(2)
+    =  ( lv_date_after_n_month+4(2) - iv_monthcount - 1 )  mod 12 + 1.
+
+* calculate the end date after n month
+
+  call function 'HR_JP_MONTH_BEGIN_END_DATE'
+    exporting
+      iv_date           = lv_date_after_n_month
+    importing
+      ev_month_end_date = lv_end_date_after_n_month.
+
+  if lv_date_after_n_month+6(2) >  lv_end_date_after_n_month+6(2).
+    ev_date = lv_end_date_after_n_month.
+  else.
+    ev_date = lv_date_after_n_month.
+  endif.
+
+  end_date = lv_end_date_after_n_month.
+endform.                    " ADD_MONTH_TO_DATE
+*&---------------------------------------------------------------------*
+*&      Form  GET_FIX_VENDOR
+*&---------------------------------------------------------------------*
+form get_fix_vendor using plant
+                          mat
+                          menge
+                          matkl
+                 changing fmeins
+                          fmenge
+                          finfo_price
+                          fwaers
+                          fbprme
+                          fstd_pack
+                          fmoq
+                          fmeprf
+                          fcontract.                        "11.07.16
+  data: f_lifnr like eord-lifnr,
+        f_ematn like eord-ematn,
+        f_ekorg like eord-ekorg,
+        f_aplfz like eine-aplfz,
+        f_meins like eina-meins,
+        f_umrez like eina-umrez,
+        f_umren like eina-umren,
+        f_menge like mseg-menge,
+        f_waers like konp-konwa,
+        f_bprme like konp-kmein,
+        f_meprf like eine-meprf,                            "27.08.15
+        f_info_price  type p decimals 6,
+        f_std_pack like eine-minbm,
+        f_contract like eord-ebeln,                         "11.07.16
+        f_moq   like eine-norbm.
+
+*For Type 1 Normal PO
+  select single lifnr ematn ekorg ebeln from eord
+  into (f_lifnr, f_ematn, f_ekorg ,f_contract)
+  where werks = plant and matnr = mat
+  and vdatu <= sy-datum and bdatu >= sy-datum
+  and ( flifn  = 'X' or febel = 'X' ) and notkz ne 'X'.
+  if sy-subrc = 0.
+
+    fcontract = f_contract.                                 "11.07.16
+*    IF F_EMATN IS INITIAL.
+    perform eina_eine using    mat     f_lifnr f_ekorg plant matkl
+                      changing f_meins f_umrez f_umren f_info_price
+                               f_waers f_bprme f_std_pack f_moq f_meprf.
+*    ELSE.
+*      PERFORM EINA_EINE USING    F_EMATN F_LIFNR F_EKORG PLANT
+*                        CHANGING F_MEINS F_UMREZ F_UMREN F_INFO_PRICE F_WAERS F_BPRME.
+*    ENDIF.
+* Begin 27.08.15
+    select single * from dd07t where domname = 'MEPRF' and ddlanguage = 'EN'
+           and domvalue_l = f_meprf .
+    if sy-subrc = 0.
+
+      fmeprf = dd07t-ddtext.
+
+    endif.
+* End 27.08.15
+
+    f_menge = menge * ( f_umren / f_umrez ).
+    move: f_meins to fmeins,
+          f_menge to fmenge,
+          f_info_price to finfo_price,
+          f_waers   to fwaers,
+          f_bprme   to fbprme,
+          f_std_pack to fstd_pack,
+          f_moq     to fmoq.
+  endif.
+
+*For Type 2 Sch Agreement
+*  SELECT SINGLE LIFNR EMATN EKORG FROM EORD
+*  INTO (F_LIFNR, F_EMATN, F_EKORG)
+*  WHERE WERKS = PLANT AND MATNR = MAT
+*  AND VDATU <= SY-DATUM AND BDATU >= SY-DATUM
+*    AND ( FEBEL EQ 'X' OR FLIFN EQ 'X' )
+*    AND AUTET EQ '2' AND NOTKZ NE 'X'.
+*
+*  IF SY-SUBRC = 0.
+*    CLEAR: F_MEINS, F_UMREZ, F_UMREN, F_MENGE.
+*    IF F_EMATN IS INITIAL.
+*      PERFORM EINA_EINE USING    MAT     F_LIFNR F_EKORG PLANT
+*                        CHANGING F_MEINS F_UMREZ F_UMREN F_INFO_PRICE F_WAERS F_BPRME.
+*    ELSE.
+*      PERFORM EINA_EINE USING    F_EMATN F_LIFNR F_EKORG PLANT
+*                        CHANGING F_MEINS F_UMREZ F_UMREN F_INFO_PRICE F_WAERS F_BPRME.
+*    ENDIF.
+*    F_MENGE = MENGE * ( F_UMREN / F_UMREZ ).
+*    MOVE: F_MEINS TO FMEINS,
+*          F_MENGE TO FMENGE,
+*          F_INFO_PRICE TO FINFO_PRICE,
+*          F_WAERS   TO FWAERS,
+*          F_BPRME   TO FBPRME.
+*  ENDIF.
+
+endform.                    " GET_FIX_VENDOR
+*&---------------------------------------------------------------------*
+*&      Form  EINA_EINE
+*&---------------------------------------------------------------------*
+** Get Planned delivery time in days (EINE-APLFZ)
+*&---------------------------------------------------------------------*
+form eina_eine using  mat lifnr ekorg plant matkl
+            changing f_meins f_umrez f_umren info_price waers bprme
+                     std_pack moq meprf.
+
+  data: t_infnr like eina-infnr,
+        netpr like konp-kbetr,
+        peinh like konp-kpein,
+        t_knumh like konp-knumh.
+
+*  SHIFT LIFNR LEFT DELETING LEADING '0'.
+
+  select single *
+  from eina where matnr = mat and lifnr = lifnr.
+
+
+  if sy-subrc = 0.
+    move : eina-meins to f_meins,
+           eina-umrez to f_umrez,
+           eina-umren to f_umren .
+
+    select single * from eine where infnr = eina-infnr
+           and ekorg = ekorg
+           and loekz = ''
+           and esokz = '2'
+           and werks = plant.
+*08.07.15 Begin
+    if sy-subrc = 0.
+      if matkl = '02'.
+        std_pack = eine-minbm.
+      else.
+        select single vormg into std_pack
+               from rdpr
+        where  rdprf = eine-rdprf
+        and werks  = eine-werks.
+      endif.
+      moq   = eine-norbm.
+      meprf = eine-meprf.                                   "27.08.15
+    endif.
+
+*08.07.15 End
+    select single knumh into t_knumh
+    from a017 where kappl = 'M'
+           and kschl = 'PB00'
+           and lifnr = lifnr
+           and matnr = mat
+           and ekorg = ekorg
+           and werks = plant
+           and esokz = '2'
+           and datbi >= sy-datum
+           and datab <= sy-datum.
+    if sy-subrc = 0.
+      perform get_konp using t_knumh changing netpr waers peinh bprme.
+      info_price = ( netpr * eina-umren / peinh
+                    / eina-umrez ) .
+    endif.
+
+*           PERFORM GET_RATE_USD
+*                    USING I_EKKO-AEDAT
+*                          WAERS
+*                    CHANGING EXRATE.
+
+*           PERFORM GET_SCALE_PRICE USING LIFNR MAT EKORG
+*                   PLANT TEKPO-MENGE TEKPO-PEINH EINE-WAERS
+*                   SCALEPRICE.
+*           IF NOT SCALEPRICE IS INITIAL.
+*              IF EXRATE > 0.
+*                INFO_PRICE = ( SCALEPRICE * EINA-UMREN / EINE-PEINH
+*                             / EINA-UMREZ ) * EXRATE  .
+*              ELSEIF EXRATE < 0.
+*                EXRATE = EXRATE * -1.
+*                INFO_PRICE = ( SCALEPRICE * EINA-UMREN / EINE-PEINH
+*                             / EINA-UMREZ ) / EXRATE  .
+*              ENDIF.
+*           ELSE.
+*              IF EXRATE > 0.
+*                 INFO_PRICE = ( NETPR * EINA-UMREN / PEINH
+*                              / EINA-UMREZ ) * EXRATE .
+*              ELSEIF EXRATE < 0.
+*                 EXRATE = EXRATE * -1.
+*                 INFO_PRICE = ( NETPR * EINA-UMREN / PEINH
+*                        / EINA-UMREZ ) / EXRATE .
+*              ENDIF.
+  endif.
+
+  check sy-subrc = 0.
+
+endform.                    " EINA_EINE
+
+*-----------------------------------
+*     FORM  READ_TEXT_SHIPPING
+*-----------------------------------
+form read_text using po  .
+  data: tmp_com(200) , tmp_name like thead-tdname.
+  clear: tmp_com,tmp_name, text.
+  free: t_line. clear: t_line.
+  move po to tmp_name.
+  call function 'READ_TEXT'
+    exporting
+*   CLIENT                        = SY-MANDT
+      id                            =  'K17'
+      language                      =  'E'
+      name                          =  tmp_name
+      object                        =  'EKKO'
+      archive_handle                = 0
+*   LOCAL_CAT                     = ' '
+* IMPORTING
+*   HEADER                         = t_head
+    tables
+      lines                         = t_line
+   exceptions
+     id                            = 1
+     language                      = 2
+     name                          = 3
+     not_found                     = 4
+     object                        = 5
+     reference_check               = 6
+     wrong_access_to_archive       = 7
+     others                        = 8
+            .
+  if not t_line[] is initial.
+    loop at t_line.
+      concatenate text t_line-tdline into tmp_com separated by space .
+      <fs>-text = tmp_com .
+    endloop.
+  endif.
+endform.                    "READ_TEXT
+
+*-----------------------------------
+*     FORM  READ_TEXT_SHIPPING
+*-----------------------------------
+form read_text_billing using poln  .
+  data: tmp_com(200) , tmp_name like thead-tdname.
+  clear: tmp_com,tmp_name, text.
+  free: t_line. clear: t_line.
+  move poln to tmp_name.
+  call function 'READ_TEXT'
+    exporting
+*   CLIENT                        = SY-MANDT
+      id                            =  'F13'
+      language                      =  'E'
+      name                          =  tmp_name
+      object                        =  'EKPO'
+      archive_handle                = 0
+*   LOCAL_CAT                     = ' '
+* IMPORTING
+*   HEADER                         = t_head
+    tables
+      lines                         = t_line
+   exceptions
+     id                            = 1
+     language                      = 2
+     name                          = 3
+     not_found                     = 4
+     object                        = 5
+     reference_check               = 6
+     wrong_access_to_archive       = 7
+     others                        = 8
+            .
+  if not t_line[] is initial.
+    loop at t_line.
+      concatenate text t_line-tdline into tmp_com separated by space .
+      text = tmp_com .
+    endloop.
+  endif.
+endform.                    "READ_TEXT
+
+*&--------------------------------------------------------------------*
+*&      Form  GET_KONP
+*&--------------------------------------------------------------------*
+*       text
+*---------------------------------------------------------------------*
+form get_konp using knumh changing price currency per uom.
+
+  clear: price, currency, per, uom.
+
+  select single kbetr konwa kpein kmein
+  into (price, currency, per, uom)
+  from konp where knumh = knumh
+              and loevm_ko = ''                        "#DEVK911980
+              and kznep = 'X'.
+  if currency eq 'JPY'.
+    price = price * 100.
+  endif.
+endform.                    "GET_KONP
+*&---------------------------------------------------------------------*
+*&      Form  GET_WEEK
+*&---------------------------------------------------------------------*
+form get_week using p_date
+           changing p_week.
+
+  call function 'DATE_GET_WEEK'
+    exporting
+      date         = p_date
+    importing
+      week         = p_week
+    exceptions
+      date_invalid = 1
+      others       = 2.
+
+  if sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  endif.
+
+endform.                    "GET_WEEK
+*&---------------------------------------------------------------------*
+*&      Form  download
+*&---------------------------------------------------------------------*
+form download.
+  check gt_ztsvi_genc[] is not initial.
+
+  if p_lastwk = 'X'.
+    ven_tab[] = i_tab[].
+    sort ven_tab by lifnr.
+    delete adjacent duplicates from ven_tab comparing lifnr.
+    loop at ven_tab.
+      perform prep_down_proc using ven_tab-lifnr.
+    endloop.
+  else.
+    perform prep_down_proc using ''.
+  endif.
+
+endform.                    "DOWNLOAD_TO_SERVER
+
+**************************
+* CHG_EBELP
+**************************
+form chg_ebelp using in_text
+         changing out_text.
+  data : count type i.
+  clear count.
+  while in_text+count(1) = '0'.
+    replace '0' with '' into in_text.
+    count = count + 1.
+  endwhile.
+  out_text = in_text.
+endform.                    "CHG_EBELP
+*&---------------------------------------------------------------------*
+*&      Form  PREP_DOWN_PROG
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form prep_down_proc using pl_lifnr.
+  if p_lastwk = 'X'.
+    if p_prog = 'X'.
+      if not r_file is initial.
+*        local
+        perform prep_download_data2 using 'LASTWK'
+                                          'PROG'
+                                          pl_lifnr.
+      elseif  not r_file2 is initial.
+*        server
+        perform prep_download_data using 'LASTWK'
+                                         'PROG'
+                                         pl_lifnr.
+      endif.
+    elseif p_cust = 'X'.
+      if not r_file is initial.
+*        local
+        perform prep_download_data2 using 'LASTWK'
+                                          'CUST'
+                                          pl_lifnr.
+      elseif  not r_file2 is initial.
+*        server
+        perform prep_download_data using 'LASTWK'
+                                         'CUST'
+                                         pl_lifnr.
+      endif.
+    endif.
+  else.
+    if p_prog = 'X'.
+      if not r_file is initial.
+*        local
+        perform prep_download_data2 using 'BG'
+                                          'PROG'
+                                          pl_lifnr.
+      elseif  not r_file2 is initial.
+*        server
+        perform prep_download_data using 'BG'
+                                         'PROG'
+                                         pl_lifnr.
+      endif.
+    elseif p_cust = 'X'.
+      if not r_file is initial.
+*        local
+        perform prep_download_data2 using 'BG'
+                                          'CUST'
+                                          pl_lifnr.
+      elseif  not r_file2 is initial.
+*        server
+        perform prep_download_data using 'BG'
+                                         'CUST'
+                                         pl_lifnr.
+      endif.
+    endif.
+  endif.
+endform.                    " PREP_DOWN_PROG
+*&---------------------------------------------------------------------*
+*&      Form  PREP_DOWNLOAD_DATA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_4232   text
+*      -->P_4233   text
+*----------------------------------------------------------------------*
+form prep_download_data  using value(uv_proc)
+                               value(uv_template)
+                               value(pl_lifnr).
+
+  data: begin of simple2lims occurs 0,
+            w(2000),
+          end of simple2lims.
+  field-symbols: <lfs_field> type any.
+  data: lv_field type string,
+        lv_string type text100.
+
+
+  data: i_tab_tot like table of i_tab with header line.
+
+  refresh i_tab_tot.
+
+  constants: delim type c value cl_abap_char_utilities=>horizontal_tab.
+  data: lw_fieldcat  type slis_fieldcat_alv.
+
+  sort gt_ztsvi_genc.
+  loop at gt_ztsvi_genc where zconstant = uv_proc
+                        and   zgroup    = uv_template.
+    read table itab_fieldcat into lw_fieldcat with key fieldname = gt_ztsvi_genc-low.
+    if sy-subrc = 0.
+      concatenate simple2lims lw_fieldcat-seltext_s lw_fieldcat-seltext_m delim
+      into simple2lims.
+    endif.
+  endloop.
+  append simple2lims.
+  clear: simple2lims.
+
+  if pl_lifnr is initial.
+
+    loop at i_tab.
+      clear i_tab_tot.
+      i_tab_tot-menge = i_tab-menge.
+      i_tab_tot-post_amt = i_tab-post_amt.
+      collect i_tab_tot.
+
+
+      loop at gt_ztsvi_genc where zconstant = uv_proc
+                            and   zgroup    = uv_template.
+        read table itab_fieldcat into lw_fieldcat with key fieldname = gt_ztsvi_genc-low.
+        if sy-subrc = 0.
+          clear: lv_field.
+          lv_field = lw_fieldcat-fieldname.
+          assign component lv_field of structure i_tab to <lfs_field>.
+          if sy-subrc = 0 and <lfs_field> is assigned.
+
+            if <lfs_field> is initial.
+              concatenate simple2lims space delim into simple2lims.
+            else.
+              write <lfs_field> to lv_string.
+              condense lv_string.
+              concatenate simple2lims lv_string delim into simple2lims.
+            endif.
+          endif.
+        endif.
+      endloop.
+      append simple2lims.
+      clear: simple2lims.
+    endloop.
+
+  else.
+
+    loop at i_tab where lifnr = pl_lifnr.
+      clear i_tab_tot.
+      i_tab_tot-menge = i_tab-menge.
+      i_tab_tot-post_amt = i_tab-post_amt.
+      collect i_tab_tot.
+
+      loop at gt_ztsvi_genc where zconstant = uv_proc
+                            and   zgroup    = uv_template.
+        read table itab_fieldcat into lw_fieldcat with key fieldname = gt_ztsvi_genc-low.
+        if sy-subrc = 0.
+          clear: lv_field.
+          lv_field = lw_fieldcat-fieldname.
+          assign component lv_field of structure i_tab to <lfs_field>.
+          if sy-subrc = 0 and <lfs_field> is assigned.
+
+            if <lfs_field> is initial.
+              concatenate simple2lims space delim into simple2lims.
+            else.
+              write <lfs_field> to lv_string.
+              condense lv_string.
+              concatenate simple2lims lv_string delim into simple2lims.
+            endif.
+          endif.
+        endif.
+      endloop.
+      append simple2lims.
+      clear: simple2lims.
+    endloop.
+
+  endif.
+
+  read table i_tab_tot index 1.
+  if  sy-subrc = 0.
+    loop at gt_ztsvi_genc where zconstant = uv_proc
+                                and   zgroup    = uv_template.
+      read table itab_fieldcat into lw_fieldcat with key fieldname = gt_ztsvi_genc-low.
+      if sy-subrc = 0.
+        clear: lv_field.
+        lv_field = lw_fieldcat-fieldname.
+        assign component lv_field of structure i_tab_tot to <lfs_field>.
+        if sy-subrc = 0 and <lfs_field> is assigned.
+          if <lfs_field> is initial.
+            concatenate simple2lims space delim into simple2lims.
+          else.
+            write <lfs_field> to lv_string.
+            condense lv_string.
+            concatenate simple2lims lv_string delim into simple2lims.
+          endif.
+        endif.
+      endif.
+    endloop.
+    append simple2lims.
+    clear: simple2lims.
+  endif.
+
+  if p_lastwk = 'X'.
+    p_file2 = '/sapmnt/PRD/global/TXT/'.
+    if p_prog = 'X' .
+      concatenate p_file2 pl_lifnr  '[PROG]_WEEKLY_CONSUMPTION_REPORT_WW' last_week '.txt' into p_file2 .
+    elseif  p_cust = 'X'.
+      concatenate p_file2 pl_lifnr  '[CUST]_WEEKLY_CONSUMPTION_REPORT_WW' last_week '.txt' into p_file2 .
+    else.
+      concatenate p_file2 pl_lifnr '_WEEKLY_CONSUMPTION_REPORT_WW' last_week '.txt' into p_file2 .
+    endif.
+  endif.
+  open dataset p_file2 for output in text mode
+  encoding default with smart linefeed.
+**& End Modified UCCHECK by Adinan Pholchan (SVI) on 1/4/2008
+  if sy-subrc = 0.
+    loop at simple2lims.
+      transfer simple2lims to p_file2.
+    endloop.
+    close dataset p_file2.
+    if sy-subrc = 0.
+      message s000 with 'DOWNLOAD TO FILE ' p_file2 'SUCCESSFULLY!'.
+    endif.
+  else.
+    message s000 with 'CAN NOT DOWNLOAD! PLEASE CHECK FILE PATH'.
+  endif.
+
+  PERFORM: SEND_EMAIL TABLES SIMPLE2LIMS.
+
+
+endform.                    " PREP_DOWNLOAD_DATA
+*&---------------------------------------------------------------------*
+*&      Form  SEND_EMAIL
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form send_email tables simple2lims_email .
+  DATA: LV_SIZE TYPE I.
+  CONSTANTS: DELIM TYPE C VALUE CL_ABAP_CHAR_UTILITIES=>HORIZONTAL_TAB.
+  FIELD-SYMBOLS: <LFS_FIELD> TYPE ANY.
+  DATA: LV_COUNT TYPE I,
+        LV_FIELD TYPE STRING,
+        LV_N TYPE CHAR50,
+        LV_N_I TYPE CHAR50,
+        LV_N_S TYPE CHAR1,
+        WA_FIELDCAT TYPE SLIS_FIELDCAT_ALV.
+
+  DATA: lv_today       TYPE sy-datum,
+       lv_last_month  TYPE sy-datum,
+       lv_first_day   TYPE sy-datum.
+
+  IF I_TAB[] IS INITIAL.
+    EXIT.
+  ENDIF.
+
+  IF P_SEND = 'X'.
+
+    LOOP AT SIMPLE2LIMS_EMAIL.
+
+      CONCATENATE SIMPLE2LIMS_EMAIL  cl_abap_char_utilities=>newline INTO SIMPLE2LIMS_EMAIL.
+      MODIFY SIMPLE2LIMS_EMAIL.
+
+    ENDLOOP.
+
+    lv_today = sy-datum.
+
+* last month
+    CALL FUNCTION 'RP_CALC_DATE_IN_INTERVAL'
+      EXPORTING
+        date      = lv_today
+        months    = 1
+        sign      = '-'
+      IMPORTING
+        calc_date = lv_last_month.
+
+    LO_SEND_REQUEST = CL_BCS=>CREATE_PERSISTENT( ).
+** Message body and subject
+**Set body
+    IF P_CUST = 'X'.
+      CONCATENATE P_SUB '(Usage ' '-' ')'INTO P_SUB.
+      W_TEXT-LINE = ''.
+    ELSE.
+
+    ENDIF.
+
+    APPEND W_TEXT TO I_TEXT.
+    CLEAR W_TEXT.
+    CLEAR W_TEXT.
+    LO_DOCUMENT = CL_DOCUMENT_BCS=>CREATE_DOCUMENT( "create document
+    I_TYPE = 'TXT' "Type of document HTM, TXT etc
+    I_TEXT =  I_TEXT "email body internal table
+    I_SUBJECT = P_SUB ). "email subject here p_sub input parameter
+
+** Pass the document to send request
+    LO_SEND_REQUEST->SET_DOCUMENT( LO_DOCUMENT ).
+
+    DESCRIBE TABLE SIMPLE2LIMS_EMAIL LINES LV_SIZE.
+    LV_SIZE = LV_SIZE * 2000.
+
+    CALL METHOD CL_VSI=>ITAB_TO_XSTRING
+      EXPORTING
+        IT_ITAB         = SIMPLE2LIMS_EMAIL[]
+      IMPORTING
+        EF_XSTRING      = LV_XSTRING
+      EXCEPTIONS
+        TABLETYPE_ERROR = 1.
+
+    IF LV_XSTRING IS NOT INITIAL.
+
+      DATA: gr_zipper TYPE REF TO cl_abap_zip.
+
+      CREATE OBJECT gr_zipper.
+
+      gr_zipper->add( name = 'AttachmentName.xls'
+                       content = LV_XSTRING ).
+      If sy-subrc eq 0.
+        LV_XSTRING = gr_zipper->save( ).
+      endif.
+***Xstring to binary
+      CALL FUNCTION 'SCMS_XSTRING_TO_BINARY'
+        EXPORTING
+          BUFFER     = LV_XSTRING
+        TABLES
+          BINARY_TAB = LIT_BINARY_CONTENT.
+**add attachment
+      CLEAR L_ATTSUBJECT .
+*  CONCATENATE '/sapmnt/' SY-SYSID '/global/TXT/' P_NAME TMP_DATE INTO L_ATTSUBJECT.
+**************************************************
+**    concatenate p_name tmp_date into l_attsubject.
+      CONCATENATE P_NAME TMP_DATE INTO L_ATTSUBJECT.
+**************************************************
+**    L_ATTSUBJECT = P_NAME. P_DATE
+** Create Attachment
+      TRY.
+        LO_DOCUMENT->ADD_ATTACHMENT( EXPORTING
+                                        I_ATTACHMENT_TYPE = 'zip'
+                                        I_ATTACHMENT_SUBJECT = L_ATTSUBJECT
+                                        I_ATT_CONTENT_HEX = LIT_BINARY_CONTENT  ).
+*          CATCH cx_document_bcs INTO lx_document_bcs.
+
+      ENDTRY.
+      TRY .
+          CALL METHOD CL_CAM_ADDRESS_BCS=>CREATE_INTERNET_ADDRESS
+            EXPORTING
+              I_ADDRESS_STRING = 'no_reply@svi.co.th'
+              I_ADDRESS_NAME   = 'SVI No Reply'
+            RECEIVING
+              RESULT           = LO_SENDER.
+
+        CATCH CX_ADDRESS_BCS.
+        CATCH CX_ROOT.
+      ENDTRY.
+      TRY.
+*    LO_SENDER = CL_SAPUSER_BCS=>CREATE( SY-UNAME ). "sender is the logged in user
+* Set sender to send request
+        LO_SEND_REQUEST->SET_SENDER(
+        EXPORTING
+        I_SENDER = LO_SENDER ).
+*    CATCH CX_ADDRESS_BCS.
+****Catch exception here
+      ENDTRY.
+**Set recipient 1
+      LO_RECIPIENT = CL_CAM_ADDRESS_BCS=>CREATE_INTERNET_ADDRESS( P_EMAIL1 ). "Here Recipient is email input p_email
+      TRY.
+        LO_SEND_REQUEST->ADD_RECIPIENT(
+            EXPORTING
+            I_RECIPIENT = LO_RECIPIENT
+            I_EXPRESS = 'X' ).
+*  CATCH CX_SEND_REQ_BCS INTO BCS_EXCEPTION .
+**Catch exception here
+      ENDTRY.
+**Set recipient 2
+      IF NOT P_EMAIL2 IS INITIAL.
+        CLEAR : LO_RECIPIENT.
+        LO_RECIPIENT = CL_CAM_ADDRESS_BCS=>CREATE_INTERNET_ADDRESS( P_EMAIL2 ). "Here Recipient is email input p_email
+        TRY.
+          LO_SEND_REQUEST->ADD_RECIPIENT(
+              EXPORTING
+              I_RECIPIENT = LO_RECIPIENT
+              I_COPY = 'X' ).
+*  CATCH CX_SEND_REQ_BCS INTO BCS_EXCEPTION .
+**Catch exception here
+        ENDTRY.
+      ENDIF.
+**Set recipient 3
+      IF NOT P_EMAIL3 IS INITIAL.
+        CLEAR : LO_RECIPIENT.
+        LO_RECIPIENT = CL_CAM_ADDRESS_BCS=>CREATE_INTERNET_ADDRESS( P_EMAIL3 ). "Here Recipient is email input p_email
+        TRY.
+          LO_SEND_REQUEST->ADD_RECIPIENT(
+              EXPORTING
+              I_RECIPIENT = LO_RECIPIENT
+              I_COPY = 'X' ).
+*  CATCH CX_SEND_REQ_BCS INTO BCS_EXCEPTION .
+**Catch exception here
+        ENDTRY.
+      ENDIF.
+**Set recipient 4
+      IF NOT P_EMAIL4 IS INITIAL.
+        CLEAR : LO_RECIPIENT.
+        LO_RECIPIENT = CL_CAM_ADDRESS_BCS=>CREATE_INTERNET_ADDRESS( P_EMAIL4 ). "Here Recipient is email input p_email
+        TRY.
+          LO_SEND_REQUEST->ADD_RECIPIENT(
+              EXPORTING
+              I_RECIPIENT = LO_RECIPIENT
+              I_COPY = 'X' ).
+*  CATCH CX_SEND_REQ_BCS INTO BCS_EXCEPTION .
+**Catch exception here
+        ENDTRY.
+      ENDIF.
+**Set recipient 5
+      IF NOT P_EMAIL5 IS INITIAL.
+        CLEAR : LO_RECIPIENT.
+        LO_RECIPIENT = CL_CAM_ADDRESS_BCS=>CREATE_INTERNET_ADDRESS( P_EMAIL5 ). "Here Recipient is email input p_email
+        TRY.
+          LO_SEND_REQUEST->ADD_RECIPIENT(
+              EXPORTING
+              I_RECIPIENT = LO_RECIPIENT
+              I_COPY = 'X' ).
+*  CATCH CX_SEND_REQ_BCS INTO BCS_EXCEPTION .
+**Catch exception here
+        ENDTRY.
+      ENDIF.
+      TRY.
+        CALL METHOD LO_SEND_REQUEST->SET_SEND_IMMEDIATELY
+          EXPORTING
+            I_SEND_IMMEDIATELY = P_SEND. "here selection screen input p_send
+*    CATCH CX_SEND_REQ_BCS INTO BCS_EXCEPTION .
+**Catch exception here
+      ENDTRY.
+      TRY.
+** Send email
+        LO_SEND_REQUEST->SEND(
+        EXPORTING
+        I_WITH_ERROR_SCREEN = 'X' ).
+        COMMIT WORK.
+        IF SY-SUBRC = 0. "mail sent successfully
+          WRITE :/ 'Mail sent successfully'.
+        ENDIF.
+*    CATCH CX_SEND_REQ_BCS INTO BCS_EXCEPTION .
+*catch exception here
+      ENDTRY.
+    ENDIF.
+
+  ELSE.
+*    MESSAGE S016(38) WITH 'NO DATA SELECTED'.
+  ENDIF.
+endform.                    " SEND_EMAIL
+*&---------------------------------------------------------------------*
+*&      Form  GET_DATA_PROG
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form get_data_prog .
+
+  data: lv_rcpt  like ekbe-menge,
+       lv_ebeln like ekbe-ebeln,
+       lv_ebelp like ekbe-ebelp,
+       lv_charg like ekbe-charg,
+       lv_matnr like ekbe-matnr,
+       lv_werks like ekbe-werks,
+       lv_budat like ekbe-budat,
+       rcpt     like ekbe-menge,
+       cancel   like ekbe-menge.
+
+  select p~werks p~matnr
+         p~ebeln p~ebelp p~charg p~lgort p~bwart
+         k~mblnr k~mjahr p~zeile k~budat k~mjahr
+         p~menge p~meins p~dmbtr p~waers p~lifnr
+         k~bktxt p~shkzg
+    from mkpf as k inner join mseg as p
+      on k~mblnr = p~mblnr
+     and k~mjahr = p~mjahr
+    into corresponding fields of table tmp_tab
+   where p~bukrs in s_bukrs
+     and p~matnr in s_matnr
+     and p~werks in s_werks
+     and p~lgort in s_lgort
+     and ( p~bwart = '411' or p~bwart = '911'
+        or p~bwart = '555' or p~bwart = '121'
+        or p~bwart = '261' )
+     and p~sobkz = 'K'
+     and p~shkzg = 'H'
+     and p~lifnr in s_lifnr
+     and p~charg in s_charg
+*     AND ( K~BUDAT >= LV_LASTWEEKFR AND
+*           K~BUDAT <= LV_LASTWEEKTO )
+     and k~xblnr in s_xblnr.
+
+  sort tmp_tab by werks matnr charg.
+
+
+*select data for reversal movement type
+  select p~werks p~matnr
+         p~ebeln p~ebelp p~charg p~lgort p~bwart
+         k~mblnr k~mjahr p~zeile k~budat
+         p~menge p~meins p~dmbtr p~waers p~lifnr
+         k~bktxt p~shkzg p~sjahr p~smbln p~smblp
+    from mkpf as k inner join mseg as p
+      on k~mblnr = p~mblnr
+     and k~mjahr = p~mjahr
+    into corresponding fields of table i_tab412
+   where p~bukrs in s_bukrs
+     and p~matnr in s_matnr
+     and p~werks in s_werks
+     and p~lgort in s_lgort
+     and ( p~bwart = '412' or p~bwart = '912'
+        or p~bwart = '556' or p~bwart = '122'
+        or p~bwart = '262' )
+     and p~sobkz = 'K'
+     and p~lifnr in s_lifnr
+     and p~charg in s_charg
+*    AND ( K~BUDAT >= LV_LASTWEEKFR AND
+*          K~BUDAT <= LV_LASTWEEKTO )
+     and k~xblnr in s_xblnr.
+
+  sort i_tab412 by sjahr smbln smblp shkzg.
+
+  select * from ztsvi_genc into table gt_ztsvi_genc
+                                where zprogram = sy-repid.
+
+endform.                    " GET_DATA_PROG
+*&---------------------------------------------------------------------*
+*&      Form  GET_DATA_CUST
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form get_data_cust .
+
+  data: lv_rcpt  like ekbe-menge,
+      lv_ebeln like ekbe-ebeln,
+      lv_ebelp like ekbe-ebelp,
+      lv_charg like ekbe-charg,
+      lv_matnr like ekbe-matnr,
+      lv_werks like ekbe-werks,
+      lv_budat like ekbe-budat,
+      rcpt     like ekbe-menge,
+      cancel   like ekbe-menge.
+
+  select p~werks p~matnr
+         p~ebeln p~ebelp p~charg p~lgort p~bwart
+         k~mblnr k~mjahr p~zeile k~budat k~mjahr
+         p~menge p~meins p~dmbtr p~waers p~lifnr
+         k~bktxt p~shkzg
+    from mkpf as k inner join mseg as p
+      on k~mblnr = p~mblnr
+     and k~mjahr = p~mjahr
+    into corresponding fields of table tmp_tab
+   where p~bukrs in s_bukrs
+     and p~matnr in s_matnr
+     and p~werks in s_werks
+     and p~lgort in s_lgort
+     and ( p~bwart = '411' or p~bwart = '911'
+        or p~bwart = '555' or p~bwart = '261' )
+     and p~sobkz = 'K'
+     and p~shkzg = 'H'
+     and p~lifnr in s_lifnr
+     and p~charg in s_charg
+*     AND ( K~BUDAT >= LV_LASTWEEKFR AND
+*           K~BUDAT <= LV_LASTWEEKTO )
+     and k~xblnr in s_xblnr.
+
+  sort tmp_tab by werks matnr charg.
+
+
+*select data for reversal movement type
+  select p~werks p~matnr
+         p~ebeln p~ebelp p~charg p~lgort p~bwart
+         k~mblnr k~mjahr p~zeile k~budat
+         p~menge p~meins p~dmbtr p~waers p~lifnr
+         k~bktxt p~shkzg p~sjahr p~smbln p~smblp
+    from mkpf as k inner join mseg as p
+      on k~mblnr = p~mblnr
+     and k~mjahr = p~mjahr
+    into corresponding fields of table i_tab412
+   where p~bukrs in s_bukrs
+     and p~matnr in s_matnr
+     and p~werks in s_werks
+     and p~lgort in s_lgort
+     and ( p~bwart = '412' or p~bwart = '912'
+        or p~bwart = '556' or p~bwart = '262' )
+     and p~sobkz = 'K'
+     and p~lifnr in s_lifnr
+     and p~charg in s_charg
+*    AND ( K~BUDAT >= LV_LASTWEEKFR AND
+*          K~BUDAT <= LV_LASTWEEKTO )
+     and k~xblnr in s_xblnr.
+
+  sort i_tab412 by sjahr smbln smblp shkzg.
+
+  select * from ztsvi_genc into table gt_ztsvi_genc
+                                where zprogram = sy-repid.
+
+endform.                    " GET_DATA_CUST
+*&---------------------------------------------------------------------*
+*&      Form  PF_VAL_REQ_PFILE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      <--P_P_FILE  text
+*----------------------------------------------------------------------*
+form pf_val_req_pfile changing e_pfile like  rlgrap-filename.
+
+  data ld_pfile like rlgrap-filename.
+
+  call function 'WS_FILENAME_GET'
+    exporting
+      def_path         = 'C:\'
+      mask             = ',*.*,*.*.'
+      mode             = 'O'
+      title            = text-t01
+    importing
+      filename         = ld_pfile
+    exceptions
+      inv_winsys       = 1
+      no_batch         = 2
+      selection_cancel = 3
+      selection_error  = 4
+      others           = 5.
+
+  check sy-subrc eq 0.
+  e_pfile = ld_pfile.
+
+endform.                    " PF_VAL_REQ_PFILE
+*&---------------------------------------------------------------------*
+*&      Form  PREP_DOWNLOAD_DATA2
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form prep_download_data2  using value(uv_proc)
+                               value(uv_template)
+                               value(pl_lifnr).
+
+  data : lt_dyn_table type ref to data,
+         lw_dyn_fcat  type lvc_s_fcat,
+         lt_dyn_fcat  type lvc_t_fcat,
+         lw_fieldcat  type slis_fieldcat_alv,
+         lv_pos type i value 1,
+         lo_line type ref to data,
+         lv_file like rlgrap-filename.
+
+  field-symbols: <ls_tab>      like line of i_tab,
+                 <ls_dyn>       type any,
+                 <lt_dyn_table> type standard table.
+
+  field-symbols: <lfs_field> type any.
+  data: lv_sum_qty type i value 0,
+        lv_post_amt type i value 0.
+
+  data : l_head(2000) occurs 0 with header line.
+  constants : delim type c value cl_abap_char_utilities=>horizontal_tab.
+
+  sort gt_ztsvi_genc.
+  loop at gt_ztsvi_genc where zconstant = uv_proc
+                          and zgroup    = uv_template.
+    read table itab_fieldcat into lw_fieldcat with key fieldname = gt_ztsvi_genc-low.
+    if sy-subrc = 0.
+      concatenate l_head lw_fieldcat-seltext_s lw_fieldcat-seltext_m delim into l_head.
+      lw_dyn_fcat-fieldname = lw_fieldcat-fieldname .          " Field Name
+      lw_dyn_fcat-outputlen = 20.                              " Output Length
+      lw_dyn_fcat-tabname   = lw_fieldcat-tabname.             "Internal Table Name
+
+      " Header text for the column
+      if lw_fieldcat-seltext_s is not initial.
+        lw_dyn_fcat-coltext   = lw_fieldcat-seltext_s.
+      elseif lw_fieldcat-seltext_m is not initial.
+        lw_dyn_fcat-coltext   = lw_fieldcat-seltext_m.
+      else.
+        lw_dyn_fcat-coltext   = lw_fieldcat-seltext_l.
+      endif.
+
+      lw_dyn_fcat-col_pos   = lv_pos.                          " Column position
+      lw_dyn_fcat-key = 'X'.                                   " Key attribute is set for the field vend.
+      append lw_dyn_fcat to lt_dyn_fcat.
+      clear lw_dyn_fcat.
+      lv_pos = lv_pos + 1.
+    endif.
+  endloop.
+  shift l_head left deleting leading space.
+  append l_head.
+
+  call method cl_alv_table_create=>create_dynamic_table
+    exporting
+      it_fieldcatalog           = lt_dyn_fcat
+    importing
+      ep_table                  = lt_dyn_table
+    exceptions
+      generate_subpool_dir_full = 1
+      others                    = 2.
+
+  if sy-subrc = 0.
+
+    assign lt_dyn_table->* to <lt_dyn_table>.
+    create data lo_line like line of <lt_dyn_table>.
+
+    if pl_lifnr is initial.
+
+      loop at i_tab assigning <ls_tab>.
+        lv_sum_qty = lv_sum_qty + <ls_tab>-menge.
+        lv_post_amt = lv_post_amt + <ls_tab>-post_amt.
+
+        assign lo_line->* to <ls_dyn>.
+
+        move-corresponding <ls_tab> to <ls_dyn>.
+        append <ls_dyn> to <lt_dyn_table>.
+        unassign <ls_dyn> .
+      endloop.
+    else.
+      loop at i_tab assigning <ls_tab> where lifnr = pl_lifnr.
+        lv_sum_qty = lv_sum_qty + <ls_tab>-menge.
+        lv_post_amt = lv_post_amt + <ls_tab>-post_amt.
+
+        assign lo_line->* to <ls_dyn>.
+
+        move-corresponding <ls_tab> to <ls_dyn>.
+        append <ls_dyn> to <lt_dyn_table>.
+        unassign <ls_dyn> .
+      endloop.
+    endif.
+
+    clear <ls_tab>.
+    assign lo_line->* to <ls_dyn>.
+    <ls_tab>-menge = lv_sum_qty.
+    <ls_tab>-post_amt = lv_post_amt.
+    move-corresponding <ls_tab> to <ls_dyn>.
+    append <ls_dyn> to <lt_dyn_table>.
+    unassign <ls_dyn> .
+
+    lv_file = p_file.
+    if p_lastwk = 'X'.
+      if p_prog = 'X' .
+        concatenate p_file pl_lifnr  '[PROG]_WEEKLY_CONSUMPTION_REPORT_WW' last_week '.txt' into lv_file.
+      elseif  p_cust = 'X'.
+        concatenate p_file pl_lifnr  '[CUST]_WEEKLY_CONSUMPTION_REPORT_WW' last_week '.txt' into lv_file.
+      else.
+        concatenate p_file pl_lifnr '_WEEKLY_CONSUMPTION_REPORT_WW' last_week '.txt' into lv_file.
+      endif.
+    endif.
+
+    call function 'WS_DOWNLOAD'
+      exporting
+        filename                = lv_file
+        filetype                = 'DAT'
+      tables
+        data_tab                = <lt_dyn_table>
+        fieldnames              = l_head
+      exceptions
+        file_open_error         = 1
+        file_write_error        = 2
+        invalid_filesize        = 3
+        invalid_type            = 4
+        no_batch                = 5
+        unknown_error           = 6
+        invalid_table_width     = 7
+        gui_refuse_filetransfer = 8
+        customer_error          = 9
+        others                  = 10.
+    if sy-subrc <> 0.
+      message id sy-msgid type sy-msgty number sy-msgno
+            with sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    else.
+      message s000 with 'Download to local file ' p_file 'successfully!'.
+    endif.
+
+  endif.
+
+endform.                    " PREP_DOWNLOAD_DATA2
